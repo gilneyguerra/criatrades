@@ -31,7 +31,7 @@ PROGID = "rtdtrading.rtdserver"
 TZ = ZoneInfo("America/Sao_Paulo")
 JANELA_TT = "T&T0"
 FIELDS = ("DAT", "ACP", "PRE", "QUL", "AVD", "AGR")  # 5 da planilha + AGR (agressor), descoberto na Fase 0
-AGRESSOR_MAP = {"comprador": "buy", "vendedor": "sell"}  # outros valores (ex.: direto/leilão) -> None
+AGRESSOR_MAP = {"comprador": "buy", "vendedor": "sell"}  # "RLP" (Retail Liquidity Provider) -> None
 _ERR_RE = re.compile(r"inv[aá]lid|erro|error|indispon|n[aã]o dispon|comando", re.I)
 
 INSTRUCAO_FALHA = (
@@ -156,6 +156,9 @@ class RtdSource:
         self._gap_reads = 0
         self._instaveis = 0
         self._lat: deque[float] = deque(maxlen=100)
+        self._lat_max = 0.0
+        self._poll_max_ms = 0.0
+        self._ultimo_poll: float | None = None
         self._ts_recentes: deque[float] = deque()
         self._ultimo_dat: str | None = None
         self.newest_first = True
@@ -262,14 +265,18 @@ class RtdSource:
         periodo = self.poll_ms / 1000.0
         while self._running:
             t0 = time.perf_counter()
-            self._lat.append(self._estabiliza())
+            if self._ultimo_poll is not None:
+                self._poll_max_ms = max(self._poll_max_ms, (t0 - self._ultimo_poll) * 1000.0)
+            self._ultimo_poll = t0
+            lat = self._estabiliza()
+            self._lat.append(lat)
+            self._lat_max = max(self._lat_max, lat)
             cur = self.snapshot()
             novos, gap = self.alinhar(self._prev, cur)
             self._reads += 1
             if gap:
                 self._gap_reads += 1
-                logger.warning("GAP: janela girou inteira entre leituras ({} linhas novas, perda desconhecida)",
-                               len(cur))
+                self._log_gap(cur)
             agora = time.monotonic()
             for i, row in enumerate(novos):
                 self._ts_recentes.append(agora)
@@ -280,6 +287,22 @@ class RtdSource:
             resto = periodo - (time.perf_counter() - t0)
             if resto > 0:
                 time.sleep(resto)
+
+    def _log_gap(self, cur: list[tuple]) -> None:
+        """Janela girou inteira: estima a perda pelo buraco de tempo entre a última linha conhecida e a
+        mais antiga da janela nova, vezes a taxa recente de negócios."""
+        i_dat = self.fields.index("DAT")
+        buraco_ms = None
+        if self._prev and cur:
+            try:
+                buraco_ms = parse_dat(str(cur[0][i_dat])) - parse_dat(str(self._prev[-1][i_dat]))
+            except ValueError:
+                buraco_ms = None
+        taxa = len(self._ts_recentes)  # negócios no último segundo
+        perda = int(round(buraco_ms / 1000.0 * taxa)) if (buraco_ms is not None and taxa) else None
+        logger.warning("GAP: janela girou inteira entre leituras; {} linhas novas, buraco de {} ms, "
+                       "perda estimada ~{} negócios (taxa {} neg/s), intervalo máx entre polls {:.0f} ms",
+                       len(cur), buraco_ms, perda if perda is not None else "?", taxa, self._poll_max_ms)
 
     # -- saúde ---------------------------------------------------------------------------------
     def health(self) -> dict:
@@ -292,6 +315,8 @@ class RtdSource:
             "n_janela": len(self._prev),
             "profundidade": self.profundidade,
             "latencia_ms": (sum(self._lat) / len(self._lat)) if self._lat else None,
+            "latencia_max_ms": self._lat_max,
+            "intervalo_poll_max_ms": self._poll_max_ms,
             "leituras": self._reads,
             "leituras_com_gap": self._gap_reads,
             "leituras_instaveis": self._instaveis,

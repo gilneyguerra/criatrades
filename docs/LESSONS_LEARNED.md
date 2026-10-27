@@ -46,10 +46,30 @@ medição contradisser o que está aqui.
 - `DAT` só tem hora com ms, sem data → combinar com a data local America/Sao_Paulo no momento da leitura.
 - Excel aberto (sem a planilha RTD) **não** bloqueou a conexão. A restrição "uma exportação por vez" ainda
   não foi reproduzida; o coletor avisa se o EXCEL.EXE abrir no meio da coleta.
-- Amostra 17:42 (after-market, fora do pico): 943 negócios em 20 s, pico 233/s, gap 0 %. Com N_MAX=500 e
-  poll de 100 ms, o pico/N_MAX = 0,47: a janela gira ~metade por segundo. No pico 10:00–10:45 isto pode
-  passar de 1 → medir lá antes de decidir sobre a ProfitDLL. Resultado da gravação de 300 s: ver
-  `data/probe/probe_WINZ26_2026-10-27_*.json` e a seção abaixo.
+- `AGR` tem três valores: `'Comprador'`, `'Vendedor'` e **`'RLP'`** (Retail Liquidity Provider — negócio
+  fechado contra o provedor de liquidez da corretora, sem agressor de mercado). Em 15 000 leituras: 51 %
+  Vendedor, 45 % Comprador, 4 % RLP. RLP vira `aggressor=None`; na gravação de 300 s foram 741 de 11 797 (6 %).
+
+### Gravação de 300 s (17:48–17:53, after-market, fora do pico)
+| métrica | valor |
+|---|---|
+| negócios | 11 797 em 300 s (média 39/s) |
+| pico | **630 negócios/s** (17:50:59) |
+| leituras | 2 980; 1 com gap → gap_pct 0,03 % |
+| leituras que precisaram de 2º RefreshData | 50 (1,7 %) |
+| latência média RefreshData | 1,82 ms |
+| ts monotônico no CSV | sim (0 retrocessos) → o alinhamento não inventou negócios |
+
+- **O único gap aconteceu no segundo de pico (630/s)**: última linha conhecida 17:50:58.881, linha mais antiga
+  da janela nova 17:50:59.053 → buraco de 172 ms ≈ **~100 negócios perdidos**. Para a janela de 500 girar
+  inteira, o poll ficou ≥ ~0,9 s sem ler: travamento do lado do Profit (o servidor RTD roda no processo do
+  profitchart.exe, que também estava desenhando o burst) ou do Python. Com 630/s a janela guarda só
+  **0,8 s de histórico**; no pico 10:00–10:45 (bem acima disso) qualquer travamento vira gap.
+- Decisão provisória do critério da Fase 0: gap_pct 0,03 % ≤ 2 % → **RTD basta fora do pico**. A decisão
+  definitiva depende da medição em 10:00–10:45. Mitigações antes de cotar a DLL: (a) aumentar o nº de linhas
+  da janela Times & Trades no Profit (a planilha original tinha 599 → o limite parece ser da janela, não do
+  RTD) e medir N_MAX de novo; (b) coletor sem outro trabalho na mesma thread (o flush em Parquet já é leve).
+- O coletor agora loga, em cada gap, o buraco em ms, a perda estimada e o intervalo máximo entre polls.
 
 ## Decisões de projeto decorrentes
 - Dedup por **alinhamento** da janela (nova leitura deve conter a anterior deslocada de k linhas), não por

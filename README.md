@@ -8,7 +8,7 @@ Dado licenciado para uso pessoal: roda só nesta máquina; `data/` não é versi
 ## Estado
 | Fase | Arquivo | Estado |
 |---|---|---|
-| 0 — sonda do RTD | `probe.py` | feita em 2026-10-27 (N_MAX=500, campo AGR descoberto). Repetir em 10:00–10:45. |
+| 0 — sonda do RTD | `probe.py` | feita em 2026-10-27 fora do pico: N_MAX=500, AGR (agressor) descoberto, 11 797 negócios em 5 min, pico 630/s, gap 0,03 %. Repetir em 10:00–10:45. |
 | 1 — coletor | `collector.py`, `feed/rtd_source.py` | implementado; falta uma manhã inteira gravada |
 | 2 — agressor | `book.py` | RTD já entrega `AGR`; fica como verificação |
 | 3 — métricas | `metrics.py` | não iniciar antes da Fase 1 íntegra |

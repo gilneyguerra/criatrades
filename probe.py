@@ -232,7 +232,10 @@ def main() -> None:
     print(f"  pico de negócios/s: {h['pico_negocios_s']}")
     print(f"  leituras: {h['leituras']}  com gap: {h['leituras_com_gap']}  gap_pct={h['gap_pct']:.2f}%")
     print(f"  leituras instáveis (tópicos ainda mudando no 2º RefreshData): {h['leituras_instaveis']}")
-    print(f"  latência média do RefreshData: {h['latencia_ms']:.2f} ms")
+    print(f"  latência média do RefreshData: {h['latencia_ms']:.2f} ms  (máx {h['latencia_max_ms']:.1f} ms; "
+          f"intervalo máx entre polls {h['intervalo_poll_max_ms']:.0f} ms)")
+    print(f"  segundos de histórico que a janela guarda no pico: {n_max / max(h['pico_negocios_s'], 1):.2f} s "
+          "(um travamento maior que isso = gap)")
     print(f"  hora do último negócio lido: {h['ultimo_negocio']}  negócios na janela: {h['n_janela']}")
     print(f"  agressor (campo AGR): {h['agressores']}")
     print(f"  CSV: {h['csv']}")
