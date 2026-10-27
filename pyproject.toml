@@ -1,0 +1,26 @@
+[project]
+name = "criatrades"
+version = "0.1.0"
+description = "Leitura de fluxo (Times & Trades) do mini-indice no Profit (Nelogica). Somente leitura."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pywin32>=306; sys_platform == 'win32'",
+    "polars>=1.0",
+    "pyarrow>=16",
+    "duckdb>=1.0",
+    "pydantic>=2.7",
+    "loguru>=0.7",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "tzdata>=2024.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

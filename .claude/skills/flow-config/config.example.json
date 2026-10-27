@@ -1,0 +1,14 @@
+{
+  "ativo": "WINZ26",
+  "janela": ["10:00", "10:45"],
+  "tz": "America/Sao_Paulo",
+  "gap_max_pct": 2.0,
+  "janela_metricas_s": [30, 60, 300],
+  "burst_min_trades_s": 50,
+  "lote_grande_percentil": 95,
+  "replay_horizonte_min": [1, 3, 5],
+  "replay_delta_pts": 30,
+  "replay_seed": 19,
+  "min_sessoes_replay": 10,
+  "pontos_por_contrato_brl": 0.20
+}
