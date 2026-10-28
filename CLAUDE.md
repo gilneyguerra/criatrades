@@ -6,7 +6,17 @@ Leitura de fluxo (Times & Trades) do mini-índice no Profit (Nelogica), em Pytho
 > **Medições que atualizam esta spec** (detalhes em `docs/LESSONS_LEARNED.md`, que prevalece sobre o texto abaixo):
 > N_MAX = 500 linhas nesta máquina (não 598); tópico inexistente provoca access violation dentro do Profit (não
 > "Comando Inválido") — nunca sondar nomes em produção; `ServerStart` nunca deve ser chamado; o campo extra
-> `T&T0/AGR/i` devolve o agressor ("Comprador"/"Vendedor"), já incorporado ao schema; `LIV0` não respondeu.
+> `T&T0/AGR/i` devolve o agressor ("Comprador"/"Vendedor"/"RLP"), já incorporado ao schema; `LIV0` não respondeu.
+
+## 0. Regras de ouro (nunca violar)
+- Nunca chamar `ServerStart`. `ConnectData` direto.
+- Nunca assinar tópico fora da allowlist validada: `T&T0 × {DAT, ACP, PRE, QUL, AVD, AGR} × 0..499` e
+  `("T&T0","INFO","ATV")`. A allowlist vive em `feed/rtd_source.py` (`ALLOWLIST`) e `RtdClient` recusa qualquer
+  outro tópico; `tests/test_allowlist.py` falha se a assinatura mudar sem atualizar o teste.
+- Sondagem de nomes só com `probe.py --testar-campos` (único lugar com `permitir_fora_da_allowlist=True`),
+  nunca no collector.
+- `aggressor` é `buy | sell | rlp | None` ("Comprador" → buy, "Vendedor" → sell, "RLP" → rlp).
+  `buy_agent_id`/`sell_agent_id` ficam `None` (reservados para a DLL).
 
 ## 1. Contexto
 - Fonte atual: servidor RTD do Profit (Nelogica), ProgID `rtdtrading.rtdserver`. É COM local do Windows,
@@ -72,13 +82,29 @@ inteira, DAT → ms em America/Sao_Paulo, Parquet a cada 5 s em data/raw/{ativo}
 sobrescrever, health log a cada 10 s. Pronto quando: uma manhã inteira gravada e o mesmo collector rodando sem
 alteração contra ProfitDllSource (stub) nos testes.
 
-## 7. FASE 2 — book.py (verificação do agressor)
-O RTD já entrega AGR. Se LIV0 vier a responder: preço == ask → comprador; preço == bid → vendedor. Pronto quando
-≥ 95 % de concordância com AGR / cores do Profit em 200 negócios.
+## 6b. Jitter no pico (feed/rtd_source.py + collector.py)
+- Loop quente sem realocação: células pré-alocadas 500×6, só linhas com tópico alterado são reconstruídas.
+- `gc.disable()` durante o loop; `gc.collect()` explícito só no flush de 5 s do collector.
+- Processo em `HIGH_PRIORITY_CLASS`; `CoInitialize` e `RefreshData` na mesma thread (checado em runtime).
+- Poll adaptativo: `poll_ms_base` (100); se uma leitura trouxe > `burst_trades_por_leitura` (300) negócios novos,
+  cai para `poll_ms_burst` (40) até a taxa ficar < 150/s por 2 s. Intervalo efetivo vai ao health log.
+- Jitter medido (p50/p95/max do intervalo real entre leituras), não só a latência do RefreshData.
+- Collector: health log com série de negócios/s, p95 de jitter, nº de gaps e hora do último gap; ao fim,
+  `data/raw/{ativo}_{dia}.summary.json` (total, pico/s, gaps com hora + perda estimada, distribuição
+  buy/sell/rlp, N_MAX usado, jitter, negócios por segundo).
 
-## 8. FASE 3 — metrics.py (janelas 30 s / 60 s / 300 s / sessão, por corretora)
+## 7. FASE 2 — reduzida a verificação (verify_aggressor.py)
+O RTD já entrega AGR. `verify_aggressor.py` amostra 200 negócios de data/raw (seed fixo) e imprime a tabela para
+conferência manual contra as cores do Profit; registrar a concordância em `docs/LESSONS_LEARNED.md`. Critério:
+≥ 95 %. `book.py`/LIV0 sai do caminho crítico.
+
+## 8. FASE 3 — metrics.py (janelas 30 s / 60 s / 300 s / sessão, por corretora) — NÃO implementar ainda
 Volume comprado/vendido, saldo líquido ("mão"), VWAP de compra e venda, negócios/s, lote médio, % lotes ≥ p95,
 burst_score, absorção, imbalance agressor, ranking "quem domina o fluxo agora", reversão de saldo.
+Regras já decididas:
+- Negócios `rlp` ficam FORA de burst_score, absorção e imbalance (não consomem liquidez, não movem preço).
+- Métrica própria `rlp_net` por corretora (compra − venda via RLP) em janelas móveis (`rlp_separado` no config).
+- Um sinal cuja janela de `gap_block_window_s` (10 s) contenha qualquer gap nasce BLOQUEADO.
 Pronto quando: replay de um dia gravado reproduz os rankings esperados (teste sobre fixture).
 
 ## 9. Máquina de estados de cada sinal (signal.py)
@@ -106,5 +132,14 @@ openpyxl/xlwings em tempo real; scraping de tela; métricas/sinais antes das Fas
 scanner/news/broker/budget/pelosi do repo de referência; MetaTrader 5 ou feeds delayed como fonte.
 
 ## 14. Ordem de execução
-Fase 0 → Fase 1 → cortar fixture + testes → Fase 2 → Fase 3 → Fase 4 → Fase 5.
+Fase 0 → Fase 1 → cortar fixture + testes → Fase 2 (verificação) → Fase 3 → Fase 4 → Fase 5.
 Upgrade futuro: ProfitDLL — cotar depois que o MVP provar valor; a troca é só implementar ProfitDllSource.
+
+## 15. Primeira manhã de pregão (checklist)
+1. Planilha Excel fechada. Profit aberto com T&T0 no WINZ26.
+2. 09:55 → `uv run python collector.py` (não rodar probe no horário nobre).
+3. 10:50 → ler o `summary.json`: pico/s, gaps no intervalo 10:00–10:45, p95 de jitter.
+4. Fora do pico: aumentar linhas da janela T&T no Profit, rodar `probe.py` para novo N_MAX; se > 500, atualizar
+   `Allowlist.linha_max` e `tests/test_allowlist.py`.
+5. Cortar fixture de 5 min (preferir um trecho com burst) e só então abrir a Fase 3.
+Critério para cotar ProfitDLL: qualquer gap dentro de 10:00–10:45 após as mitigações de jitter e janela maior.

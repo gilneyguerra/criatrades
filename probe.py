@@ -22,7 +22,7 @@ from pathlib import Path
 from loguru import logger
 
 from config_loader import load_config
-from feed.rtd_source import JANELA_TT, TZ, RtdClient, RtdSource
+from feed.rtd_source import ALLOWLIST, JANELA_TT, TZ, RtdClient, RtdSource
 from schema import CSV_COLUMNS
 
 # Candidatos a campos extras. Os 5 oficiais (DAT ACP PRE QUL AVD) já são conhecidos.
@@ -39,8 +39,8 @@ CAMPOS_INFO_LIV = ["ATV", "BID", "ASK", "MCP", "MVD", "ULT"]
 def excel_aberto() -> bool:
     try:
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq EXCEL.EXE"], capture_output=True,
-                             text=True, timeout=10).stdout
-        return "EXCEL.EXE" in out.upper()
+                             timeout=10).stdout  # bytes: o tasklist escreve na code page OEM, não em UTF-8
+        return b"EXCEL.EXE" in out.upper()
     except Exception:  # noqa: BLE001
         return False
 
@@ -141,9 +141,13 @@ def _passo3_minimo(client: RtdClient) -> dict:
     return {"tt_extra_linha0": _testa(client, "T&T0 AGR, linha 0", JANELA_TT, ["AGR"], 0)}
 
 
-def passo4_gravar(ativo: str, n_max: int, segundos: int, saida: Path) -> dict:
+def passo4_gravar(ativo: str, n_max: int, segundos: int, saida: Path, cfg) -> dict:
     print(f"\n== PASSO 4: gravando {segundos}s de T&T0 em CSV (profundidade {n_max}) ==")
-    src = RtdSource(ativo=ativo, profundidade=n_max, poll_ms=100)
+    src = RtdSource(ativo=ativo, profundidade=min(n_max, ALLOWLIST.linha_max + 1), poll_ms=cfg.poll_ms_base,
+                    poll_ms_burst=cfg.poll_ms_burst, burst_trades_por_leitura=cfg.burst_trades_por_leitura)
+    if n_max > ALLOWLIST.linha_max + 1:
+        print(f"  N_MAX medido {n_max} > allowlist {ALLOWLIST.linha_max + 1}: gravando com a allowlist. Para usar"
+              " tudo, atualize Allowlist.linha_max em feed/rtd_source.py e tests/test_allowlist.py.")
     t_start = time.perf_counter()
     src.start()
     t_conn = time.perf_counter() - t_start
@@ -163,11 +167,12 @@ def passo4_gravar(ativo: str, n_max: int, segundos: int, saida: Path) -> dict:
         w.writeheader()
         try:
             for tr in src.iter_trades():
-                w.writerow(tr.as_row())
-                por_segundo[tr.ts_ms // 1000] += 1
-                agressores[str(tr.aggressor)] += 1
-                total += 1
-                exemplo = exemplo or tr
+                if tr is not None:  # None = heartbeat sem negócio novo
+                    w.writerow(tr.as_row())
+                    por_segundo[tr.ts_ms // 1000] += 1
+                    agressores[str(tr.aggressor)] += 1
+                    total += 1
+                    exemplo = exemplo or tr
                 agora = time.monotonic()
                 if agora >= prox_log:
                     h = src.health()
@@ -213,7 +218,8 @@ def main() -> None:
         print(f"  AVISO: fora da janela {j0}-{j1}. O pico de 10:00-10:45 é mais intenso; "
               "o gap_pct medido agora SUBESTIMA o gap do pico. Repetir dentro da janela.")
 
-    client = RtdClient()
+    # o probe é o ÚNICO lugar autorizado a sair da allowlist (medir N_MAX, sondar campos)
+    client = RtdClient(permitir_fora_da_allowlist=True)
     client.open()
     try:
         ativo = passo1_exportacao(client)
@@ -224,7 +230,7 @@ def main() -> None:
     if n_max == 0:
         sys.exit(2)
 
-    h = passo4_gravar(ativo, n_max, args.segundos, Path(args.saida))
+    h = passo4_gravar(ativo, n_max, args.segundos, Path(args.saida), cfg)
 
     print("\n== RESUMO ==")
     print(f"  ativo={h['ativo']}  source={h['source']}  N_MAX={n_max}")
@@ -232,8 +238,12 @@ def main() -> None:
     print(f"  pico de negócios/s: {h['pico_negocios_s']}")
     print(f"  leituras: {h['leituras']}  com gap: {h['leituras_com_gap']}  gap_pct={h['gap_pct']:.2f}%")
     print(f"  leituras instáveis (tópicos ainda mudando no 2º RefreshData): {h['leituras_instaveis']}")
-    print(f"  latência média do RefreshData: {h['latencia_ms']:.2f} ms  (máx {h['latencia_max_ms']:.1f} ms; "
-          f"intervalo máx entre polls {h['intervalo_poll_max_ms']:.0f} ms)")
+    print(f"  latência média do RefreshData: {h['latencia_ms']:.2f} ms  (máx {h['latencia_max_ms']:.1f} ms)")
+    print(f"  jitter do intervalo entre leituras: p50={h['jitter_p50_ms']:.0f} ms p95={h['jitter_p95_ms']:.0f} ms "
+          f"máx={h['jitter_max_ms']:.0f} ms; poll efetivo no fim={h['intervalo_ms_efetivo']} ms")
+    for g in h['gaps']:
+        print(f"  gap em {g['hora']}: buraco {g['buraco_ms']} ms, perda estimada ~{g['perda_estimada']} negócios, "
+              f"intervalo da leitura {g['intervalo_leitura_ms']} ms")
     print(f"  segundos de histórico que a janela guarda no pico: {n_max / max(h['pico_negocios_s'], 1):.2f} s "
           "(um travamento maior que isso = gap)")
     print(f"  hora do último negócio lido: {h['ultimo_negocio']}  negócios na janela: {h['n_janela']}")

@@ -8,7 +8,9 @@ import pyarrow as pa
 from pydantic import BaseModel, Field
 
 Source = Literal["rtd", "dll"]
-Aggressor = Literal["buy", "sell"]
+# RTD/AGR: "Comprador" -> buy, "Vendedor" -> sell, "RLP" -> rlp (Retail Liquidity Provider: negócio fechado
+# contra o provedor de liquidez da corretora; não consome liquidez do book nem move preço). Outros -> None.
+Aggressor = Literal["buy", "sell", "rlp"]
 
 
 class Trade(BaseModel):
@@ -19,7 +21,7 @@ class Trade(BaseModel):
     seller: str = Field(description="corretora vendedora (AVD)")
     buy_agent_id: int | None = None   # só a DLL traz
     sell_agent_id: int | None = None  # só a DLL traz
-    aggressor: Aggressor | None = None  # DLL traz; RTD infere via LIV0 (Fase 2)
+    aggressor: Aggressor | None = None  # RTD traz via AGR; DLL traz no callback
     seq: int = Field(description="sequência monotônica própria do coletor")
     gap: bool = Field(default=False, description="True se a janela girou inteira entre duas leituras")
     source: Source

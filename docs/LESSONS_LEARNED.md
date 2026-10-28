@@ -72,6 +72,13 @@ medição contradisser o que está aqui.
 - O coletor agora loga, em cada gap, o buraco em ms, a perda estimada e o intervalo máximo entre polls.
 
 ## Decisões de projeto decorrentes
+- **Allowlist de tópicos** (`ALLOWLIST` em `feed/rtd_source.py`): `T&T0 × {DAT, ACP, PRE, QUL, AVD, AGR} × 0..499`
+  + `INFO/ATV`. `RtdClient.connect` recusa o resto; só `probe.py` abre a exceção. `tests/test_allowlist.py` é
+  sentinela: muda a allowlist, muda o teste (depois de medir).
+- `aggressor` ∈ {buy, sell, rlp, None}. `rlp` fica separado nas métricas (não consome liquidez, não move preço).
+- Mitigações de jitter adotadas em 2026-10-27 (ainda sem medição no pico): células pré-alocadas, GC desligado no
+  loop com coleta no flush, HIGH_PRIORITY_CLASS, poll adaptativo 100 → 40 ms em burst, jitter p50/p95/máx no
+  health e no summary.json. Medir o efeito na primeira manhã antes de cotar a DLL.
 - Dedup por **alinhamento** da janela (nova leitura deve conter a anterior deslocada de k linhas), não por
   conjunto de tuplas: negócios idênticos consecutivos são legítimos no WIN.
 - `gap=True` só no primeiro negócio da leitura em que nenhum deslocamento alinhou; a perda é desconhecida.

@@ -33,12 +33,12 @@ class ProfitDllSource:
     def stop(self) -> None:
         self._running = False
 
-    def iter_trades(self) -> Iterator[Trade]:
+    def iter_trades(self) -> Iterator[Trade | None]:
         while self._running:
             try:
                 yield self._q.get(timeout=0.5)
             except queue.Empty:
-                continue
+                yield None  # heartbeat (mesmo contrato do RtdSource)
 
     def health(self) -> dict:
         return {"source": self.source, "ultimo_negocio": None, "negocios_s": 0.0,

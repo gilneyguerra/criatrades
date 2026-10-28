@@ -15,6 +15,11 @@ class Config(BaseModel):
     janela: tuple[str, str] = ("10:00", "10:45")
     tz: str = "America/Sao_Paulo"
     gap_max_pct: float = 2.0
+    gap_block_window_s: int = 10          # sinal cuja janela contenha um gap nasce BLOQUEADO
+    rlp_separado: bool = True             # negócios rlp fora de burst/absorção/imbalance; métrica própria rlp_net
+    poll_ms_base: int = 100
+    poll_ms_burst: int = 40
+    burst_trades_por_leitura: int = 300
     janela_metricas_s: list[int] = Field(default_factory=lambda: [30, 60, 300])
     burst_min_trades_s: int = 50
     lote_grande_percentil: int = 95

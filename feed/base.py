@@ -10,8 +10,10 @@ from schema import Trade
 class FeedSource(Protocol):
     def start(self) -> None: ...
     def stop(self) -> None: ...
-    def iter_trades(self) -> Iterator[Trade]:
-        """Gerador bloqueante: entrega negócios novos em ordem cronológica. Termina em stop()."""
+    def iter_trades(self) -> Iterator[Trade | None]:
+        """Gerador bloqueante: entrega negócios novos em ordem cronológica. Quando uma leitura não traz
+        negócio novo, entrega None (heartbeat) para o consumidor poder checar horário/flush/health mesmo
+        com o mercado parado. Termina em stop()."""
         ...
     def health(self) -> dict:
         """Chaves mínimas: source, ultimo_negocio, negocios_s, gap_pct, n_janela, latencia_ms."""
