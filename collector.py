@@ -10,6 +10,7 @@ Flush a cada 5 s (com gc.collect() explícito: a fonte RTD roda com GC desligado
 from __future__ import annotations
 
 import argparse
+import ctypes
 import gc
 import json
 import subprocess
@@ -40,6 +41,47 @@ def excel_aberto() -> bool:
         return False
 
 
+def medir_resolucao_sleep(n: int = 20, alvo_ms: float = 1.0) -> float:
+    """Média, em ms, de n chamadas time.sleep(alvo_ms). Windows padrão ~15,6 ms; com timeBeginPeriod(1) ~1-2 ms."""
+    t0 = time.perf_counter()
+    for _ in range(n):
+        time.sleep(alvo_ms / 1000.0)
+    return (time.perf_counter() - t0) * 1000.0 / n
+
+
+class TimerFino:
+    """winmm.timeBeginPeriod(1): resolução de 1 ms para time.sleep enquanto o loop roda; desfaz no fim."""
+
+    def __init__(self, periodo_ms: int = 1) -> None:
+        self.periodo_ms = periodo_ms
+        self.ativo = False
+        self.resolucao_antes_ms: float | None = None
+        self.resolucao_depois_ms: float | None = None
+        self._winmm = None
+
+    def __enter__(self) -> "TimerFino":
+        self.resolucao_antes_ms = medir_resolucao_sleep()
+        try:
+            self._winmm = ctypes.WinDLL("winmm")
+            self.ativo = self._winmm.timeBeginPeriod(self.periodo_ms) == 0  # TIMERR_NOERROR
+        except (OSError, AttributeError):
+            self.ativo = False
+        self.resolucao_depois_ms = medir_resolucao_sleep()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self.ativo and self._winmm is not None:
+            try:
+                self._winmm.timeEndPeriod(self.periodo_ms)
+            finally:
+                self.ativo = False
+
+    def info(self) -> dict:
+        return {"timeBeginPeriod_ativo": self.ativo, "periodo_ms": self.periodo_ms,
+                "resolucao_sleep_antes_ms": self.resolucao_antes_ms,
+                "resolucao_sleep_efetiva_ms": self.resolucao_depois_ms}
+
+
 def caminho_sem_sobrescrever(saida: Path, ativo: str, agora: datetime) -> Path:
     base = saida / f"{ativo}_{agora:%Y-%m-%d}.parquet"
     if not base.exists():
@@ -68,6 +110,7 @@ class Collector:
         self.por_segundo: Counter[int] = Counter()      # epoch s -> negócios
         self.agressores: Counter[str] = Counter()       # buy / sell / rlp / None
         self.gaps_vistos: list[dict] = []               # (hora, seq) dos negócios com gap=True
+        self.timer = TimerFino()
 
     # -- parquet -------------------------------------------------------------------------------
     def _abrir(self) -> None:
@@ -92,6 +135,13 @@ class Collector:
 
     # -- loop ------------------------------------------------------------------------------------
     def run(self, ate: datetime | None = None, max_trades: int | None = None) -> Path | None:
+        with self.timer:
+            return self._run(ate, max_trades)
+
+    def _run(self, ate: datetime | None, max_trades: int | None) -> Path | None:
+        logger.info("timer: timeBeginPeriod(1) {} — sleep(1 ms) real: antes {:.2f} ms, agora {:.2f} ms",
+                    "ativo" if self.timer.ativo else "INDISPONÍVEL",
+                    self.timer.resolucao_antes_ms or 0.0, self.timer.resolucao_depois_ms or 0.0)
         self.source.start()
         self._abrir()
         prox_flush = time.monotonic() + self.flush_s
@@ -147,13 +197,14 @@ class Collector:
         gaps = h.get("gaps") or []
         ultimo_gap = gaps[-1]["hora"] if gaps else "-"
         logger.info("{} source={} último={} neg/s={:.0f} série10s={} gap_pct={:.2f} gaps={} último_gap={} "
-                    "janela={} lat={} jitter_p95={:.0f}ms jitter_max={:.0f}ms poll={}ms{} total={}",
+                    "janela={} lat={} jitter_p95={:.0f}ms jitter_max={:.0f}ms poll={}ms{} sleep1ms={:.2f}ms total={}",
                     "FIM" if final else "health", h.get("source"), h.get("ultimo_negocio"),
                     h.get("negocios_s") or 0.0, self._serie_ultimos_s(), h.get("gap_pct") or 0.0,
                     self.total_gaps, ultimo_gap, h.get("n_janela"),
                     f"{lat:.1f}ms" if lat is not None else "-",
                     h.get("jitter_p95_ms") or 0.0, h.get("jitter_max_ms") or 0.0,
-                    h.get("intervalo_ms_efetivo", "-"), " BURST" if h.get("modo_burst") else "", self.total)
+                    h.get("intervalo_ms_efetivo", "-"), " BURST" if h.get("modo_burst") else "",
+                    self.timer.resolucao_depois_ms or 0.0, self.total)
 
     def summary(self) -> dict:
         h = self.source.health()
@@ -179,6 +230,7 @@ class Collector:
             "latencia_ms": {"media": h.get("latencia_ms"), "max": h.get("latencia_max_ms")},
             "leituras": h.get("leituras"),
             "leituras_instaveis": h.get("leituras_instaveis"),
+            "timer": self.timer.info(),
             "negocios_por_segundo": {datetime.fromtimestamp(s, TZ).strftime("%H:%M:%S"): n
                                      for s, n in sorted(self.por_segundo.items())},
         }

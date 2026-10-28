@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 import pytest
 
-from collector import Collector, caminho_sem_sobrescrever
+from collector import Collector, TimerFino, caminho_sem_sobrescrever, medir_resolucao_sleep
 from feed.base import FeedSource
 from feed.profitdll_source import ProfitDllSource
 from schema import CSV_COLUMNS, Trade
@@ -143,3 +143,23 @@ def test_stub_dll_falha_claro(tmp_path: Path):
     col = Collector(ProfitDllSource("WINZ26"), "WINZ26", tmp_path, checar_excel=False)
     with pytest.raises(NotImplementedError, match="nelogica"):
         col.run()
+
+
+def test_timer_fino_mede_e_desfaz():
+    with TimerFino() as t:
+        assert t.ativo is True                      # Windows: winmm sempre disponível
+        assert 0.5 < t.resolucao_antes_ms < 60      # sem timeBeginPeriod costuma dar ~15,6 ms
+        assert 0.5 < t.resolucao_depois_ms < 6      # com timeBeginPeriod(1) deve ficar perto de 1-2 ms
+        info = t.info()
+        assert info["timeBeginPeriod_ativo"] and info["periodo_ms"] == 1
+    assert t.ativo is False
+    assert medir_resolucao_sleep(n=3) > 0
+
+
+def test_summary_tem_timer(tmp_path: Path):
+    col = Collector(FakeSource(_trades(5)), "WINZ26", tmp_path, checar_excel=False, relogio=lambda: T0)
+    col.run()
+    s = json.loads((tmp_path / "WINZ26_2026-10-27.summary.json").read_text(encoding="utf-8"))
+    assert s["timer"]["timeBeginPeriod_ativo"] is True
+    assert s["timer"]["resolucao_sleep_efetiva_ms"] < 6
+    assert col.timer.ativo is False  # desfeito ao sair do run()

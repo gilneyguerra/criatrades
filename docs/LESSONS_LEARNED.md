@@ -79,6 +79,10 @@ medição contradisser o que está aqui.
 - Mitigações de jitter adotadas em 2026-10-27 (ainda sem medição no pico): células pré-alocadas, GC desligado no
   loop com coleta no flush, HIGH_PRIORITY_CLASS, poll adaptativo 100 → 40 ms em burst, jitter p50/p95/máx no
   health e no summary.json. Medir o efeito na primeira manhã antes de cotar a DLL.
+- `timeBeginPeriod(1)` (winmm) ativo durante o `collector.run()`, desfeito no fim; a resolução real de
+  `sleep(1 ms)` é medida antes e depois (média de 20 sleeps) e vai ao health log (`sleep1ms=`) e ao summary
+  (`timer`). Em 2026-10-27 (Profit aberto) a resolução já era 1,5 ms antes da chamada — outro processo segura
+  o timer fino; manter a chamada para não depender disso. Se no burst o p95 ficar ~40 ms, pegou; ~55 ms, não.
 - Dedup por **alinhamento** da janela (nova leitura deve conter a anterior deslocada de k linhas), não por
   conjunto de tuplas: negócios idênticos consecutivos são legítimos no WIN.
 - `gap=True` só no primeiro negócio da leitura em que nenhum deslocamento alinhou; a perda é desconhecida.

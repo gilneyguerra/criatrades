@@ -27,6 +27,8 @@ uv run python collector.py --fonte dll           # falha com NotImplementedError
   abaixo de 150/s por 2 s (`poll_ms_base`, `poll_ms_burst`, `burst_trades_por_leitura` no config).
 - Loop quente sem realocação, GC desligado durante a leitura (coleta explícita só no flush de 5 s),
   processo em prioridade alta, COM na mesma thread do loop.
+- `timeBeginPeriod(1)` durante a coleta (resolução de 1 ms para o sleep); a resolução efetiva medida sai
+  no health log como `sleep1ms=` e no summary em `timer`.
 - Jitter medido (p50/p95/máx do intervalo real entre leituras) e logado; cada gap registra hora, buraco em ms,
   perda estimada e o intervalo da leitura em que ocorreu.
 
